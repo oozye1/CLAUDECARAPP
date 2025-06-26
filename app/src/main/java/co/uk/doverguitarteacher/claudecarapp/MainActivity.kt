@@ -1,8 +1,10 @@
 package co.uk.doverguitarteacher.claudecarapp
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.widget.Button
@@ -14,52 +16,67 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.*
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.GoogleMap
+import com.google.android.gms.maps.OnMapReadyCallback
+import com.google.android.gms.maps.SupportMapFragment
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.MarkerOptions
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
-    // --- VIEW AND LOGIC COMPONENTS ---
     private lateinit var btnFlag: Button
     private lateinit var btnAR: Button
     private lateinit var previewView: PreviewView
     private lateinit var fusedLocationClient: FusedLocationProviderClient
-
-    // --- CameraX Components ---
+    private var mMap: GoogleMap? = null
+    private lateinit var mapFragmentView: View
     private lateinit var cameraExecutor: ExecutorService
     private var cameraProvider: ProcessCameraProvider? = null
 
-    // --- CONSTANTS ---
     companion object {
         private const val TAG = "MainActivity"
         private const val PERMISSION_REQUEST_CODE = 1001
     }
 
-    // --- LIFECYCLE METHOD ---
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Initialize everything
         initViews()
         setupLocationClient()
         setupClickListeners()
 
-        // Initialize camera executor
         cameraExecutor = Executors.newSingleThreadExecutor()
 
-        // Check for permissions when the app starts
+        val mapFragment = supportFragmentManager
+            .findFragmentById(R.id.map_fragment) as SupportMapFragment
+        mapFragment.getMapAsync(this)
+
         checkAndRequestPermissions()
     }
 
-    // --- SETUP FUNCTIONS ---
+    override fun onMapReady(googleMap: GoogleMap) {
+        mMap = googleMap
+        Log.i(TAG, "Map is ready.")
+        mapFragmentView = supportFragmentManager.findFragmentById(R.id.map_fragment)!!.requireView()
+
+        val dover = LatLng(51.1296, 1.3111)
+        mMap?.addMarker(MarkerOptions().position(dover).title("Marker in Dover"))
+        mMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(dover, 12f))
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            mMap?.isMyLocationEnabled = true
+        }
+    }
+
     private fun initViews() {
         btnFlag = findViewById(R.id.btnFlag)
         btnAR = findViewById(R.id.btnAR)
         previewView = findViewById(R.id.previewView)
-        previewView.visibility = View.GONE // Initially hidden
     }
 
     private fun setupLocationClient() {
@@ -75,64 +92,78 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- FEATURE LOGIC (PLACEHOLDERS) ---
+    @SuppressLint("MissingPermission")
     private fun flagParkingSpot() {
-        // We will add logic here later
-        Toast.makeText(this, "Parking spot flagged!", Toast.LENGTH_SHORT).show()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Location permission not granted", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val locationRequest = LocationRequest.create().apply {
+            interval = 1000
+            fastestInterval = 500
+            priority = Priority.PRIORITY_HIGH_ACCURACY
+            numUpdates = 1
+        }
+
+        val locationCallback = object : LocationCallback() {
+            override fun onLocationResult(locationResult: LocationResult) {
+                val location = locationResult.lastLocation
+                if (location != null) {
+                    val lat = location.latitude
+                    val lng = location.longitude
+                    val carLatLng = LatLng(lat, lng)
+                    mMap?.addMarker(MarkerOptions().position(carLatLng).title("Parked Car"))
+                    mMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(carLatLng, 17f))
+                } else {
+                    Toast.makeText(applicationContext, "Unable to get current location", Toast.LENGTH_SHORT).show()
+                }
+                fusedLocationClient.removeLocationUpdates(this)
+            }
+        }
+
+        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
     }
 
     private fun toggleARMode() {
+        if (!::mapFragmentView.isInitialized) {
+            Toast.makeText(this, "Map is not ready yet, please wait.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         if (previewView.visibility == View.GONE) {
-            // Check for camera permission before trying to show/start camera
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            if (isCameraPermissionGranted()) {
+                mapFragmentView.visibility = View.GONE
                 previewView.visibility = View.VISIBLE
                 startCamera()
                 Toast.makeText(this, "AR mode ON", Toast.LENGTH_SHORT).show()
             } else {
                 Toast.makeText(this, "Camera permission is required for AR mode.", Toast.LENGTH_LONG).show()
-                // Optionally, re-request permission or guide the user
-                // You could call checkAndRequestPermissions() again if you want to immediately re-prompt.
+                checkAndRequestPermissions()
             }
         } else {
             previewView.visibility = View.GONE
+            mapFragmentView.visibility = View.VISIBLE
             stopCamera()
             Toast.makeText(this, "AR mode OFF", Toast.LENGTH_SHORT).show()
         }
     }
 
-    // --- CameraX ---
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-
         cameraProviderFuture.addListener({
-            // Used to bind the lifecycle of cameras to the lifecycle owner
             cameraProvider = cameraProviderFuture.get()
-
-            // Preview
-            val preview = Preview.Builder()
-                .build()
-                .also {
-                    it.setSurfaceProvider(previewView.surfaceProvider)
-                }
-
-            // Select back camera as a default
+            val preview = Preview.Builder().build().also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
             try {
-                // Unbind use cases before rebinding
                 cameraProvider?.unbindAll()
-
-                // Bind use cases to camera
-                cameraProvider?.bindToLifecycle(
-                    this, cameraSelector, preview
-                )
+                cameraProvider?.bindToLifecycle(this, cameraSelector, preview)
                 Log.i(TAG, "Camera started successfully.")
-
             } catch (exc: Exception) {
                 Log.e(TAG, "Use case binding failed", exc)
-                Toast.makeText(this, "Failed to start camera: ${exc.message}", Toast.LENGTH_LONG).show()
             }
-
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -141,8 +172,6 @@ class MainActivity : AppCompatActivity() {
         Log.i(TAG, "Camera stopped.")
     }
 
-
-    // --- PERMISSIONS HANDLING ---
     private fun isCameraPermissionGranted(): Boolean {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
     }
@@ -166,38 +195,13 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            var allRequestedPermissionsGranted = true
-            if (grantResults.isEmpty()) {
-                // This case should ideally not happen if permissions were requested.
-                allRequestedPermissionsGranted = false
-                Log.w(TAG, "onRequestPermissionsResult: grantResults array is empty.")
-            }
-
-            for (i in permissions.indices) {
-                if (i < grantResults.size && grantResults[i] == PackageManager.PERMISSION_GRANTED) {
-                    Log.i(TAG, "Permission granted: ${permissions[i]}")
-                } else {
-                    Log.w(TAG, "Permission denied: ${permissions[i]}")
-                    allRequestedPermissionsGranted = false
+            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                Toast.makeText(this, "Permissions granted!", Toast.LENGTH_SHORT).show()
+                if (mMap != null && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    mMap?.isMyLocationEnabled = true
                 }
-            }
-
-            if (allRequestedPermissionsGranted) {
-                Toast.makeText(this, "Required permissions granted!", Toast.LENGTH_SHORT).show()
-                // If the user had just granted camera permission and the previewView is meant to be visible,
-                // you might want to call startCamera() here. However, our current toggleARMode() handles
-                // starting the camera on the next click if permissions are now available.
-                // For a more immediate effect after permission grant IF the user had already tried to open AR:
-                // if (isCameraPermissionGranted() && previewView.visibility == View.VISIBLE) {
-                //    startCamera()
-                // }
             } else {
-                Toast.makeText(this, "Some permissions were denied. App may not function fully.", Toast.LENGTH_LONG).show()
-                if (!isCameraPermissionGranted()) {
-                    Toast.makeText(this, "Camera permission is essential for AR mode and was denied.", Toast.LENGTH_LONG).show()
-                    // You might want to disable the AR button or provide further guidance to the user
-                    // on how to grant permissions through app settings.
-                }
+                Toast.makeText(this, "Permissions denied. Some features may not work.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -205,6 +209,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
-        stopCamera() // Ensure camera is stopped and resources released
+        stopCamera()
     }
 }

@@ -6,36 +6,61 @@
     android:layout_height="match_parent"
     tools:context=".MainActivity">
 
-    <!-- Your Buttons and PreviewView should be defined here -->
-    <!-- Make sure to add the views your MainActivity is looking for -->
-
+    <!-- This is the top part of your UI with the control buttons -->
     <Button
         android:id="@+id/btnFlag"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
         android:text="Flag Spot"
-        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/btnAR"
+        app:layout_constraintHorizontal_bias="0.5"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="16dp"/>
+        app:layout_constraintTop_toTopOf="parent" />
 
     <Button
         android:id="@+id/btnAR"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
         android:text="Toggle AR"
-        app:layout_constraintTop_toBottomOf="@id/btnFlag"
-        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="16dp"/>
+        app:layout_constraintHorizontal_bias="0.5"
+        app:layout_constraintStart_toEndOf="@+id/btnFlag"
+        app:layout_constraintTop_toTopOf="parent" />
 
+    <!--
+    This is the container for your Google Map.
+    It starts as VISIBLE.
+    It has the exact same constraints as the PreviewView below it
+    so they occupy the same space on the screen.
+    -->
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/map_fragment"
+        android:name="com.google.android.gms.maps.SupportMapFragment"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="16dp"
+        android:visibility="visible"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/btnFlag" />
+
+    <!--
+    This is your CameraX PreviewView for the camera feed.
+    It starts as GONE (hidden).
+    It has the exact same constraints as the map fragment above it.
+    -->
     <androidx.camera.view.PreviewView
         android:id="@+id/previewView"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="0dp"
-        app:layout_constraintTop_toBottomOf="@id/btnAR"
-        app:layout_constraintBottom_toBottomOf="parent"
         android:layout_marginTop="16dp"
-        />
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/btnFlag" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
