@@ -1,66 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    tools:context=".MainActivity">
+    android:layout_height="match_parent">
 
-    <!-- This is the top part of your UI with the control buttons -->
-    <Button
-        android:id="@+id/btnFlag"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="Flag Spot"
-        app:layout_constraintEnd_toStartOf="@+id/btnAR"
-        app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <Button
-        android:id="@+id/btnAR"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="Toggle AR"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toEndOf="@+id/btnFlag"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <!--
-    This is the container for your Google Map.
-    It starts as VISIBLE.
-    It has the exact same constraints as the PreviewView below it
-    so they occupy the same space on the screen.
-    -->
-    <androidx.fragment.app.FragmentContainerView
+    <!-- Google Maps fragment -->
+    <fragment
         android:id="@+id/map_fragment"
         android:name="com.google.android.gms.maps.SupportMapFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="16dp"
-        android:visibility="visible"
+        app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/btnFlag" />
+        app:layout_constraintEnd_toEndOf="parent" />
 
-    <!--
-    This is your CameraX PreviewView for the camera feed.
-    It starts as GONE (hidden).
-    It has the exact same constraints as the map fragment above it.
-    -->
-    <androidx.camera.view.PreviewView
-        android:id="@+id/previewView"
+    <!-- Sceneform AR fragment (starts hidden) -->
+    <fragment
+        android:id="@+id/arFragment"
+        android:name="com.google.ar.sceneform.ux.ArFragment"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="16dp"
         android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- “Flag” button (bottom-left) -->
+    <Button
+        android:id="@+id/btnFlag"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Flag"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="16dp" />
+
+    <!-- “AR” button (bottom-right) -->
+    <Button
+        android:id="@+id/btnAR"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="AR"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/btnFlag" />
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
