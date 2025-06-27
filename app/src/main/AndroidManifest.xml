@@ -27,10 +27,7 @@
         <meta-data
             android:name="com.google.ar.core"
             android:value="required" />
-        <!-- Add tools:replace to fix the conflict -->
-        <meta-data
-            android:name="com.google.ar.core"
-            android:value="required" />
+
 
         <!-- Required for Google Maps -->
         <meta-data

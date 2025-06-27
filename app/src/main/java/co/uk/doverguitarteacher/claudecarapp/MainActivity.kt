@@ -23,12 +23,18 @@ import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.model.PolylineOptions
 import com.google.ar.core.Anchor
 import com.google.ar.core.ArCoreApk
 import com.google.ar.sceneform.AnchorNode
 import com.google.ar.sceneform.rendering.ModelRenderable
 import com.google.ar.sceneform.ux.ArFragment
 import com.google.ar.sceneform.ux.TransformableNode
+import com.google.ar.sceneform.math.Quaternion
+import com.google.ar.sceneform.math.Vector3
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
@@ -40,9 +46,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private var carLng: Double? = null
     private lateinit var arFragment: ArFragment
     private lateinit var mapFragment: SupportMapFragment
+    private val breadcrumbPoints = mutableListOf<LatLng>()
+    private var currentAnchorNode: AnchorNode? = null
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 1001
+        private const val UPDATE_INTERVAL_MS = 1000L // Update location every 1 second
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,7 +77,11 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         arFragment.view?.visibility = View.GONE
 
         arFragment.setOnTapArPlaneListener { hitResult, _, _ ->
-            placeModel(hitResult.createAnchor())
+            if (carLat != null && carLng != null) {
+                placeModel(hitResult.createAnchor())
+            } else {
+                Toast.makeText(this, "Flag your car location first!", Toast.LENGTH_SHORT).show()
+            }
         }
 
         btnFlag.setOnClickListener { flagLocation() }
@@ -79,12 +92,17 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onResume() {
         super.onResume()
         checkARAvailability()
+        startLocationUpdates()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopLocationUpdates()
     }
 
     private fun checkARAvailability() {
         val availability = ArCoreApk.getInstance().checkAvailability(this)
         if (availability.isTransient) {
-            // Re-check in 200ms
             Handler(Looper.getMainLooper()).postDelayed({
                 checkARAvailability()
             }, 200)
@@ -97,24 +115,56 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private fun placeModel(anchor: Anchor) {
         ModelRenderable.builder()
-            .setSource(this, Uri.parse("arrow.glb"))
+            .setSource(this, Uri.parse("file:///android_asset/arrow.glb"))
             .build()
             .thenAccept { renderable ->
                 addNodeToScene(renderable, anchor)
             }
             .exceptionally { throwable ->
-                Toast.makeText(this, "Could not load model: ${throwable.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Could not load arrow model: ${throwable.message}", Toast.LENGTH_LONG).show()
                 null
             }
     }
 
     private fun addNodeToScene(renderable: ModelRenderable, anchor: Anchor) {
+        // Remove previous anchor node if exists
+        currentAnchorNode?.let { arFragment.arSceneView.scene.removeChild(it) }
+
         val anchorNode = AnchorNode(anchor)
         val transformableNode = TransformableNode(arFragment.transformationSystem)
         transformableNode.renderable = renderable
         transformableNode.setParent(anchorNode)
         arFragment.arSceneView.scene.addChild(anchorNode)
         transformableNode.select()
+        currentAnchorNode = anchorNode
+
+        // Orient the arrow toward the car
+        updateArrowOrientation(transformableNode)
+    }
+
+    private fun updateArrowOrientation(node: TransformableNode) {
+        if (carLat == null || carLng == null) return
+
+        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+            .addOnSuccessListener { location ->
+                if (location != null) {
+                    val userLat = location.latitude
+                    val userLng = location.longitude
+                    val bearing = calculateBearing(userLat, userLng, carLat!!, carLng!!)
+                    val rotation = Quaternion.axisAngle(Vector3(0f, 1f, 0f), -bearing)
+                    node.localRotation = rotation
+                }
+            }
+    }
+
+    private fun calculateBearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+        val dLon = Math.toRadians(lon2 - lon1)
+        val lat1Rad = Math.toRadians(lat1)
+        val lat2Rad = Math.toRadians(lat2)
+        val y = sin(dLon) * cos(lat2Rad)
+        val x = cos(lat1Rad) * sin(lat2Rad) - sin(lat1Rad) * cos(lat2Rad) * cos(dLon)
+        val bearingRad = atan2(y, x)
+        return (Math.toDegrees(bearingRad).toFloat() + 360) % 360
     }
 
     private fun checkPermissions() {
@@ -129,25 +179,40 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             mapFragment.getMapAsync(this)
         } else {
-            Toast.makeText(this, "Permissions are required for this app.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Permissions required for app functionality.", Toast.LENGTH_LONG).show()
+            finish()
         }
     }
 
     override fun onMapReady(googleMap: GoogleMap) {
         mMap = googleMap
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
             mMap?.isMyLocationEnabled = true
             mMap?.uiSettings?.isMyLocationButtonEnabled = true
+            // Set default map location
+            mMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(0.0, 0.0), 15f))
         }
     }
 
     private fun flagLocation() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
             Toast.makeText(this, "Location permission not granted.", Toast.LENGTH_SHORT).show()
             return
         }
@@ -159,7 +224,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                     carLng = location.longitude
                     val carPosition = LatLng(carLat!!, carLng!!)
                     mMap?.clear()
-                    mMap?.addMarker(MarkerOptions().position(carPosition).title("Parked Here"))
+                    breadcrumbPoints.clear()
+                    breadcrumbPoints.add(carPosition)
+                    mMap?.addMarker(MarkerOptions().position(carPosition).title("Car Parked Here"))
                     mMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(carPosition, 18f))
                     Toast.makeText(this, "Car location flagged!", Toast.LENGTH_SHORT).show()
                 } else {
@@ -169,7 +236,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     private fun toggleARMode() {
-        // Check AR availability before toggling
         val availability = ArCoreApk.getInstance().checkAvailability(this)
         if (!availability.isSupported) {
             Toast.makeText(this, "AR not supported", Toast.LENGTH_SHORT).show()
@@ -177,12 +243,71 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
 
         if (arFragment.view?.visibility == View.GONE) {
+            if (carLat == null || carLng == null) {
+                Toast.makeText(this, "Flag your car location first!", Toast.LENGTH_SHORT).show()
+                return
+            }
             arFragment.view?.visibility = View.VISIBLE
             mapFragment.view?.visibility = View.GONE
             Toast.makeText(this, "Searching for surfaces...", Toast.LENGTH_SHORT).show()
         } else {
             arFragment.view?.visibility = View.GONE
             mapFragment.view?.visibility = View.VISIBLE
+            updateBreadcrumbTrail()
+        }
+    }
+
+    private fun startLocationUpdates() {
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) return
+
+        val handler = Handler(Looper.getMainLooper())
+        val runnable = object : Runnable {
+            override fun run() {
+                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+                    .addOnSuccessListener { location ->
+                        if (location != null && carLat != null && carLng != null) {
+                            val currentPosition = LatLng(location.latitude, location.longitude)
+                            if (breadcrumbPoints.lastOrNull() != currentPosition) {
+                                breadcrumbPoints.add(currentPosition)
+                                updateBreadcrumbTrail()
+                            }
+                            // Update AR arrow orientation if in AR mode
+                            if (arFragment.view?.visibility == View.VISIBLE) {
+                                currentAnchorNode?.children?.firstOrNull()?.let { node ->
+                                    updateArrowOrientation(node as TransformableNode)
+                                }
+                            }
+                        }
+                    }
+                handler.postDelayed(this, UPDATE_INTERVAL_MS)
+            }
+        }
+        handler.post(runnable)
+    }
+
+    private fun stopLocationUpdates() {
+        // Remove handler callbacks to prevent memory leaks
+        Handler(Looper.getMainLooper()).removeCallbacksAndMessages(null)
+    }
+
+    private fun updateBreadcrumbTrail() {
+        mMap?.clear()
+        if (carLat != null && carLng != null) {
+            val carPosition = LatLng(carLat!!, carLng!!)
+            mMap?.addMarker(MarkerOptions().position(carPosition).title("Car Parked Here"))
+            if (breadcrumbPoints.size > 1) {
+                mMap?.addPolyline(
+                    PolylineOptions()
+                        .addAll(breadcrumbPoints)
+                        .color(ContextCompat.getColor(this, android.R.color.holo_blue_dark))
+                        .width(10f)
+                )
+            }
+            mMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(carPosition, 18f))
         }
     }
 }
