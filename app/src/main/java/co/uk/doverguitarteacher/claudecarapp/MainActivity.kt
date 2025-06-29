@@ -2,6 +2,7 @@ package co.uk.doverguitarteacher.claudecarapp
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -26,11 +27,16 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.Marker
 import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.model.PolylineOptions
 import com.google.ar.core.Anchor
 import com.google.ar.core.ArCoreApk
+import com.google.ar.core.Camera
+import com.google.ar.core.Pose
+import com.google.ar.core.TrackingState
 import com.google.ar.sceneform.AnchorNode
 import com.google.ar.sceneform.rendering.ModelRenderable
 import com.google.ar.sceneform.ux.ArFragment
@@ -57,11 +63,20 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
     private var rotationVectorSensor: Sensor? = null
     private val deviceOrientation = FloatArray(3)
     private var trackingOrientation = false
+    private var breadcrumbMarkers = mutableListOf<Marker>()
+    private var placedArrow = false
 
     companion object {
+        private const val PREFS_NAME = "CarAppPrefs"
+        private const val KEY_CAR_LAT = "CarLatitude"
+        private const val KEY_CAR_LNG = "CarLongitude"
+
         private const val PERMISSION_REQUEST_CODE = 1001
         private const val UPDATE_INTERVAL_MS = 1000L
         private const val TAG = "ARROW_DEBUG"
+        private const val BREADCRUMB_INTERVAL_POINTS = 5
+        private const val MAX_BREADCRUMBS = 1000
+        private const val ARROW_DISTANCE = 3.0f // 3 meters in front of user
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,6 +91,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
 
+        loadCarLocation()
+
         arFragment.view?.visibility = View.GONE
         checkPermissions()
         checkGooglePlayServices()
@@ -84,9 +101,62 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         btnFlag.setOnClickListener { flagLocation() }
         btnAR.setOnClickListener { toggleARMode() }
 
-        arFragment.setOnTapArPlaneListener { hitResult, _, _ ->
-            placeModel(hitResult.createAnchor())
+        arFragment.arSceneView.scene.addOnUpdateListener { frameTime ->
+            if (!placedArrow && arFragment.view?.visibility == View.VISIBLE) {
+                placeArrowInFront()
+            }
         }
+    }
+
+    private fun loadCarLocation() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val latBits = prefs.getLong(KEY_CAR_LAT, 0L)
+        val lngBits = prefs.getLong(KEY_CAR_LNG, 0L)
+
+        if (latBits != 0L && lngBits != 0L) {
+            // *** FIXED: Use the universally compatible Java method ***
+            carLat = java.lang.Double.longBitsToDouble(latBits)
+            carLng = java.lang.Double.longBitsToDouble(lngBits)
+
+            if (breadcrumbPoints.isEmpty()) {
+                breadcrumbPoints.add(LatLng(carLat!!, carLng!!))
+            }
+            Toast.makeText(this, "Restored last parked location.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun saveCarLocation(lat: Double, lng: Double) {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+        // *** FIXED: Use the universally compatible Java method ***
+        prefs.putLong(KEY_CAR_LAT, java.lang.Double.doubleToRawLongBits(lat))
+        prefs.putLong(KEY_CAR_LNG, java.lang.Double.doubleToRawLongBits(lng))
+        prefs.apply()
+    }
+
+    private fun placeArrowInFront() {
+        val frame = arFragment.arSceneView.arFrame ?: return
+        val camera = frame.camera
+
+        if (camera.trackingState != TrackingState.TRACKING) return
+
+        val cameraPose = camera.pose
+        val cameraPosition = cameraPose.translation
+        val direction = floatArrayOf(0f, 0f, -ARROW_DISTANCE)
+        val rotatedDirection = cameraPose.rotateVector(direction)
+        val finalPosition = floatArrayOf(
+            cameraPosition[0] + rotatedDirection[0],
+            cameraPosition[1] + rotatedDirection[1],
+            cameraPosition[2] + rotatedDirection[2]
+        )
+        val pose = Pose.makeTranslation(
+            finalPosition[0],
+            finalPosition[1],
+            finalPosition[2]
+        )
+        val session = arFragment.arSceneView.session ?: return
+        val anchor = session.createAnchor(pose)
+        placeModel(anchor)
+        placedArrow = true
     }
 
     override fun onResume() {
@@ -95,6 +165,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         startLocationUpdates()
         if (arFragment.view?.visibility == View.VISIBLE) {
             arFragment.onResume()
+            placedArrow = false
         }
         if (rotationVectorSensor != null) {
             sensorManager.registerListener(this, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
@@ -144,10 +215,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         val transformableNode = TransformableNode(arFragment.transformationSystem)
 
         transformableNode.scaleController.minScale = 0.1f
-        transformableNode.scaleController.maxScale = 2.0f
-        transformableNode.localScale = Vector3(0.3f, 0.3f, 0.3f)
-        transformableNode.localPosition = Vector3(0f, 0.1f, 0f)
-
+        transformableNode.scaleController.maxScale = 1.0f
+        transformableNode.localScale = Vector3(0.5f, 0.5f, 0.5f)
+        transformableNode.localPosition = Vector3(0f, 0.05f, 0f)
         transformableNode.renderable = renderable
         transformableNode.setParent(anchorNode)
         arFragment.arSceneView.scene.addChild(anchorNode)
@@ -191,6 +261,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
                     if (location != null) {
                         carLat = location.latitude
                         carLng = location.longitude
+
+                        saveCarLocation(carLat!!, carLng!!)
+
                         val carPosition = LatLng(carLat!!, carLng!!)
                         mMap?.clear()
                         breadcrumbPoints.clear()
@@ -207,27 +280,20 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         }
     }
 
-    // ###############################################################
-    // THIS IS THE CORRECTED AND FINAL FUNCTION.
-    // IT USES onPause() AND onResume() ON THE AR FRAGMENT ITSELF,
-    // WHICH IS THE ONLY CORRECT WAY TO MANAGE THE LIFECYCLE AND CAMERA.
-    // ###############################################################
     private fun toggleARMode() {
         if (!ArCoreApk.getInstance().checkAvailability(this).isSupported) {
             Toast.makeText(this, "AR not supported", Toast.LENGTH_SHORT).show()
             return
         }
 
-        // SWITCHING TO MAP
         if (arFragment.view?.visibility == View.VISIBLE) {
             Log.d(TAG, "Switching TO MAP from AR")
-            arFragment.onPause() // PAUSE the AR session and RELEASE the camera.
+            arFragment.onPause()
             arFragment.view?.visibility = View.GONE
             mapFragment.view?.visibility = View.VISIBLE
             updateBreadcrumbTrail()
-        }
-        // SWITCHING TO AR
-        else {
+            placedArrow = false
+        } else {
             if (carLat == null || carLng == null) {
                 Toast.makeText(this, "Flag your car location first!", Toast.LENGTH_SHORT).show()
                 return
@@ -235,11 +301,11 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
             Log.d(TAG, "Switching TO AR from MAP")
             mapFragment.view?.visibility = View.GONE
             arFragment.view?.visibility = View.VISIBLE
-            arFragment.onResume() // RESUME the AR session and ACQUIRE the camera.
+            arFragment.onResume()
+            placedArrow = false
             Toast.makeText(this, "Searching for surfaces...", Toast.LENGTH_SHORT).show()
         }
     }
-
 
     private fun startLocationUpdates() {
         val handler = Handler(Looper.getMainLooper())
@@ -250,10 +316,18 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
                         .addOnSuccessListener { location ->
                             if (location != null) {
                                 val currentPosition = LatLng(location.latitude, location.longitude)
-                                if (breadcrumbPoints.lastOrNull() != currentPosition && carLat != null) {
-                                    breadcrumbPoints.add(currentPosition)
-                                    if(mapFragment.view?.visibility == View.VISIBLE) {
-                                        updateBreadcrumbTrail()
+                                if (carLat != null && carLng != null) {
+                                    if (breadcrumbPoints.isEmpty() ||
+                                        distanceBetween(breadcrumbPoints.last(), currentPosition) > 5) {
+                                        breadcrumbPoints.add(currentPosition)
+
+                                        while (breadcrumbPoints.size > MAX_BREADCRUMBS) {
+                                            breadcrumbPoints.removeFirst()
+                                        }
+
+                                        if(mapFragment.view?.visibility == View.VISIBLE) {
+                                            updateBreadcrumbTrail()
+                                        }
                                     }
                                 }
                                 if (arFragment.view?.visibility == View.VISIBLE && arFragment.isResumed) {
@@ -272,11 +346,22 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         handler.post(runnable)
     }
 
+    private fun distanceBetween(point1: LatLng, point2: LatLng): Float {
+        val results = FloatArray(1)
+        android.location.Location.distanceBetween(
+            point1.latitude, point1.longitude,
+            point2.latitude, point2.longitude,
+            results
+        )
+        return results[0]
+    }
+
     private fun updateBreadcrumbTrail() {
         mMap?.clear()
         if (carLat != null && carLng != null) {
             val carPosition = LatLng(carLat!!, carLng!!)
             mMap?.addMarker(MarkerOptions().position(carPosition).title("Car Parked Here"))
+
             if (breadcrumbPoints.size > 1) {
                 mMap?.addPolyline(
                     PolylineOptions()
@@ -284,6 +369,22 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
                         .color(ContextCompat.getColor(this, android.R.color.holo_blue_dark))
                         .width(10f)
                 )
+
+                breadcrumbMarkers.forEach { it.remove() }
+                breadcrumbMarkers.clear()
+
+                for (i in breadcrumbPoints.indices) {
+                    if (i > 0 && (i % BREADCRUMB_INTERVAL_POINTS == 0 || i == breadcrumbPoints.size - 1)) {
+                        val marker = mMap?.addMarker(
+                            MarkerOptions()
+                                .position(breadcrumbPoints[i])
+                                .icon(BitmapDescriptorFactory.fromResource(R.drawable.blue_dot))
+                                .anchor(0.5f, 0.5f)
+                                .flat(true)
+                        )
+                        marker?.let { breadcrumbMarkers.add(it) }
+                    }
+                }
             }
         }
     }
@@ -333,7 +434,14 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
             mMap?.isMyLocationEnabled = true
             mMap?.uiSettings?.isMyLocationButtonEnabled = true
         }
-        mMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(51.12, 1.31), 12f))
+
+        if (carLat != null && carLng != null) {
+            val carPosition = LatLng(carLat!!, carLng!!)
+            mMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(carPosition, 18f))
+            updateBreadcrumbTrail()
+        } else {
+            mMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(51.12, 1.31), 12f))
+        }
     }
 
     private fun stopLocationUpdates() {
