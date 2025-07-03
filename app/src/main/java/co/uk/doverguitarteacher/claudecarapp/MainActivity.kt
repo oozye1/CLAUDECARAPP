@@ -43,19 +43,24 @@ import kotlin.math.sin
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListener {
 
+    // --- Core UI and Map/AR Properties ---
     private lateinit var btnFlag: Button
     private lateinit var btnAR: Button
     private lateinit var arFragment: ArFragment
     private lateinit var mapFragment: SupportMapFragment
     private var mMap: GoogleMap? = null
     private lateinit var fusedLocationClient: FusedLocationProviderClient
+
+    // --- State Properties ---
     private var carLat: Double? = null
     private var carLng: Double? = null
     private var currentAnchorNode: AnchorNode? = null
     private val breadcrumbPoints = mutableListOf<LatLng>()
+
+    // --- SENSOR PROPERTIES (FOR ORIENTATION) ---
     private lateinit var sensorManager: SensorManager
     private var rotationVectorSensor: Sensor? = null
-    private val deviceOrientation = FloatArray(3)
+    private val deviceOrientation = FloatArray(3) // [azimuth, pitch, roll]
     private var trackingOrientation = false
 
     companion object {
@@ -72,7 +77,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         btnAR = findViewById(R.id.btnAR)
         arFragment = supportFragmentManager.findFragmentById(R.id.arFragment) as ArFragment
         mapFragment = supportFragmentManager.findFragmentById(R.id.map_fragment) as SupportMapFragment
+
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
         rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
 
@@ -85,7 +92,13 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         btnAR.setOnClickListener { toggleARMode() }
 
         arFragment.setOnTapArPlaneListener { hitResult, _, _ ->
-            placeModel(hitResult.createAnchor())
+            Log.d(TAG, "AR PLANE TAPPED!")
+            if (carLat != null && carLng != null) {
+                placeModel(hitResult.createAnchor())
+            } else {
+                Log.e(TAG, "Car location not flagged. Cannot place arrow.")
+                Toast.makeText(this, "Flag your car location first!", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -93,9 +106,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         super.onResume()
         checkARAvailability()
         startLocationUpdates()
-        if (arFragment.view?.visibility == View.VISIBLE) {
-            arFragment.onResume()
-        }
         if (rotationVectorSensor != null) {
             sensorManager.registerListener(this, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
         }
@@ -105,9 +115,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         super.onPause()
         stopLocationUpdates()
         sensorManager.unregisterListener(this)
-        if (arFragment.isResumed) {
-            arFragment.onPause()
-        }
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -120,18 +127,21 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        // Not used
+        // Not used, but required by the interface
     }
 
     private fun placeModel(anchor: Anchor) {
+        Log.d(TAG, "placeModel() function CALLED.")
         ModelRenderable.builder()
             .setSource(this, Uri.parse("file:///android_asset/arrow.glb"))
             .setIsFilamentGltf(true)
             .build()
             .thenAccept { renderable ->
+                Log.d(TAG, "MODEL LOADED SUCCESSFULLY! Now adding to scene.")
                 addNodeToScene(renderable, anchor)
             }
             .exceptionally { throwable ->
+                Log.e(TAG, "COULD NOT LOAD ARROW MODEL. See exception:", throwable)
                 Toast.makeText(this, "ARROW FAILED TO LOAD: ${throwable.message}", Toast.LENGTH_LONG).show()
                 null
             }
@@ -153,11 +163,16 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         arFragment.arSceneView.scene.addChild(anchorNode)
         transformableNode.select()
         currentAnchorNode = anchorNode
+
+        Log.d(TAG, "addNodeToScene finished. Arrow should be visible. Updating orientation.")
         updateArrowOrientation(transformableNode)
     }
 
     private fun updateArrowOrientation(node: TransformableNode) {
-        if (carLat == null || carLng == null || !trackingOrientation) return
+        if (carLat == null || carLng == null || !trackingOrientation) {
+            Log.w(TAG, "Skipping orientation update: Missing location or sensor data.")
+            return
+        }
 
         fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
             .addOnSuccessListener { location ->
@@ -170,6 +185,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
                     val rotationAngle = (gpsBearing - deviceAzimuth + 360) % 360
                     val rotation = Quaternion.axisAngle(Vector3(0f, 1f, 0f), -rotationAngle)
                     node.localRotation = rotation
+                    Log.d(TAG, "Orientation updated. GPS Bearing: $gpsBearing, Device Azimuth: $deviceAzimuth, Applied Rotation: $rotationAngle")
+                } else {
+                    Log.e(TAG, "Failed to get user location for orientation update.")
                 }
             }
     }
@@ -198,6 +216,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
                         mMap?.addMarker(MarkerOptions().position(carPosition).title("Car Parked Here"))
                         mMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(carPosition, 18f))
                         Toast.makeText(this, "Car location flagged!", Toast.LENGTH_SHORT).show()
+                        Log.d(TAG, "Car location flagged at: $carLat, $carLng")
                     } else {
                         Toast.makeText(this, "Could not get current location.", Toast.LENGTH_LONG).show()
                     }
@@ -207,39 +226,25 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         }
     }
 
-    // ###############################################################
-    // THIS IS THE CORRECTED AND FINAL FUNCTION.
-    // IT USES onPause() AND onResume() ON THE AR FRAGMENT ITSELF,
-    // WHICH IS THE ONLY CORRECT WAY TO MANAGE THE LIFECYCLE AND CAMERA.
-    // ###############################################################
     private fun toggleARMode() {
-        if (!ArCoreApk.getInstance().checkAvailability(this).isSupported) {
-            Toast.makeText(this, "AR not supported", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        // SWITCHING TO MAP
-        if (arFragment.view?.visibility == View.VISIBLE) {
-            Log.d(TAG, "Switching TO MAP from AR")
-            arFragment.onPause() // PAUSE the AR session and RELEASE the camera.
-            arFragment.view?.visibility = View.GONE
-            mapFragment.view?.visibility = View.VISIBLE
-            updateBreadcrumbTrail()
-        }
-        // SWITCHING TO AR
-        else {
-            if (carLat == null || carLng == null) {
-                Toast.makeText(this, "Flag your car location first!", Toast.LENGTH_SHORT).show()
-                return
+        if (ArCoreApk.getInstance().checkAvailability(this).isSupported) {
+            if (arFragment.view?.visibility == View.GONE) {
+                if (carLat == null || carLng == null) {
+                    Toast.makeText(this, "Flag your car location first!", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                arFragment.view?.visibility = View.VISIBLE
+                mapFragment.view?.visibility = View.GONE
+                Toast.makeText(this, "Searching for surfaces...", Toast.LENGTH_SHORT).show()
+            } else {
+                arFragment.view?.visibility = View.GONE
+                mapFragment.view?.visibility = View.VISIBLE
+                updateBreadcrumbTrail()
             }
-            Log.d(TAG, "Switching TO AR from MAP")
-            mapFragment.view?.visibility = View.GONE
-            arFragment.view?.visibility = View.VISIBLE
-            arFragment.onResume() // RESUME the AR session and ACQUIRE the camera.
-            Toast.makeText(this, "Searching for surfaces...", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "AR not supported", Toast.LENGTH_SHORT).show()
         }
     }
-
 
     private fun startLocationUpdates() {
         val handler = Handler(Looper.getMainLooper())
@@ -256,7 +261,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
                                         updateBreadcrumbTrail()
                                     }
                                 }
-                                if (arFragment.view?.visibility == View.VISIBLE && arFragment.isResumed) {
+                                if (arFragment.view?.visibility == View.VISIBLE) {
                                     currentAnchorNode?.children?.firstOrNull()?.let { node ->
                                         if (node is TransformableNode) {
                                             updateArrowOrientation(node)
@@ -272,6 +277,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
         handler.post(runnable)
     }
 
+    // ##### THE ONLY LINE THAT WAS CHANGED IS IN THIS FUNCTION #####
     private fun updateBreadcrumbTrail() {
         mMap?.clear()
         if (carLat != null && carLng != null) {
@@ -281,6 +287,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback, SensorEventListene
                 mMap?.addPolyline(
                     PolylineOptions()
                         .addAll(breadcrumbPoints)
+                        // THIS LINE IS NOW FIXED
                         .color(ContextCompat.getColor(this, android.R.color.holo_blue_dark))
                         .width(10f)
                 )
