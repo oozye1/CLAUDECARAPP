@@ -1,53 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    tools:context=".MainActivity">
 
-    <!-- Google Maps fragment -->
-    <fragment
+    <!-- The Google Map Fragment -->
+    <!-- This now takes up the entire screen -->
+    <androidx.fragment.app.FragmentContainerView
         android:id="@+id/map_fragment"
         android:name="com.google.android.gms.maps.SupportMapFragment"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Sceneform AR fragment (starts hidden) -->
-    <fragment
-        android:id="@+id/arFragment"
-        android:name="com.google.ar.sceneform.ux.ArFragment"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:visibility="gone"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- “Flag” button (bottom-left) -->
+    <!-- The Flag Location Button -->
+    <!-- This now sits on top of the map at the bottom -->
     <Button
         android:id="@+id/btnFlag"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Flag"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        android:layout_marginStart="16dp"
-        android:layout_marginBottom="16dp" />
-
-    <!-- “AR” button (bottom-right) -->
-    <Button
-        android:id="@+id/btnAR"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="AR"
+        android:layout_marginBottom="16dp"
+        android:text="Flag Car Location"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="16dp" />
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <!--
+    The ArFragment and btnAR that were here have been completely removed
+    to resolve the InflateException crash.
+    -->
 
 </androidx.constraintlayout.widget.ConstraintLayout>
